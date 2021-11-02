@@ -1,0 +1,142 @@
+---
+title: "Stout_case"
+author: "Chengyan Ji"
+date: "2021/10/31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(raster)
+library(corrr)
+library(ggplot2)
+library(corrgram)
+library(MASS)
+library(car)
+# load the dataset
+df1 = read.csv("C:/Users/kurtji/Desktop/Interviews/Stout/loans_full_schema_1.csv")
+```
+
+```{r}
+#describing the dataset
+summary_df1 = summary(df1)
+print(summary_df1)
+num_cols <- unlist(lapply(df1, is.numeric)) # Identify numeric columns
+sum(num_cols)
+cat('The data set has 10000 observations, and 55 variables. \nAmong the 55 variables, there are 12 categorical variables and 42 numerical variables as well as the time index variable issue_month \n\n')
+
+#get the numerical columns
+df1_num = df1[num_cols]
+par(mfrow=c(2,2))
+
+#missing data
+#print missing values in each data set
+cat('I sorted out the columns with more than 500 missing data, they will be dealt with in the analysis:\n\n')
+na_value = colSums(is.na(df1))
+print(na_value[na_value >= 500])
+```
+
+## 2
+
+```{r pressure, echo=FALSE}
+#to visualize the correlation matrix, I dropped the columns with more than 500 missing data and replace the rest missing data with mean
+na_index <- names(na_value[na_value >= 500])
+df1_num_nona <- df1_num[, -which(names(df1_num) %in% na_index)]
+for(i in 1:ncol(df1_num_nona)){
+  df1_num_nona[is.na(df1_num_nona[,i]), i] <- mean(df1_num_nona[,i], na.rm = TRUE)
+}
+
+summary(df1_num_nona)
+cat('\n\nFrom summary of the cleaned data set, we see that the variable "num_accounts_120d_past_due" is all 0, so we exlude this column')
+cat('\nWe will also drop the time index issue_month')
+
+drops <- c('num_accounts_120d_past_due', 'issue_month')
+df1_num_nona = df1_num_nona[ , !(names(df1_num_nona) %in% drops)]
+
+corrgram(df1_num_nona)
+cat('\n\nWe can see that there are some correlation problems for each of the variables, but most of them have manipulatable correlation')
+
+hist(df1_num_nona$annual_income, xlim = c(0,500000), breaks = c(100))
+cat('\n\nWe can see that majority of income is between 10 to 20 thousand')
+
+ggplot(data= df1) + 
+  geom_boxplot(aes(x = homeownership, y = annual_income)) + ylim(0,400000)
+cat('\n\nWe can see that mortage has the highest average income and rent has the lowest')
+
+ggplot(data = df1) + 
+  geom_point(mapping = aes(x = total_credit_lines, y = total_credit_limit, color = homeownership)) + ylim(0,200000)
+cat('\n\nWe can see that mortage concentrates on the top and rent are mainly in the left bottom corner')
+
+ggplot(data = df1, aes(x = cut(interest_rate, breaks = c(0,10,Inf)), y = loan_amount)) + geom_violin()
+cat('\n\nWe can see that loan amount has no difference whether the interest is below or above 10')
+```
+
+
+```{r}
+#Linear Regression
+#I handpicked the variables with no major portion of missing data and replace the rest of the missing data with the mean
+
+#Dealing with missing data
+df1_nona <- df1[, -which(names(df1) %in% na_index)]
+num_cols <- unlist(lapply(df1_nona, is.numeric))
+#dropping the variable of all 0s and the time index
+drops <- c('num_accounts_120d_past_due', 'issue_month')
+df1_nona = df1_nona[ , !(names(df1_nona) %in% drops)]
+
+#Fill numeric N/A cells with mean
+for(i in length(which(sapply(df1_nona, is.numeric)))){
+  j = which(sapply(df1_nona, is.numeric))[i]
+  df1_nona[is.na(df1_nona[,j]), j] <- mean(df1_nona[,j], na.rm = TRUE)
+}
+
+#Fill categorical N/A cells with mode
+for(i in 1:ncol(df1_nona)){
+  df1_nona[is.na(df1_nona[,i]), i] <- mode(df1_nona[,i])
+}
+```
+
+```{r}
+#Linear Regression
+cat('For linear regression, since there are too many variables, I performed a forward selection\n')
+fitFirst_1 = lm(interest_rate ~ 1, data = df1_nona)
+summary(fitFirst_1)
+```
+
+```{r}
+biggest <- formula(lm(interest_rate ~ homeownership + annual_income + inquiries_last_12m + total_credit_limit + num_satisfactory_accounts + loan_amount + grade + total_debit_limit, data = df1_nona))
+step(fitFirst_1, direction = 'forward', scope = biggest, data = df1_nona)
+cat('My RStudio kept crashing at this step so I am unable to finish this regression, so I handpicked 10 predictors and ran a forward selection which gave me a model with 7 predictors')
+```
+
+```{r}
+#Plotting the new model
+fit_3 <- lm(formula = interest_rate ~ grade + total_debit_limit + inquiries_last_12m + 
+    homeownership + num_satisfactory_accounts + loan_amount + 
+    annual_income, data = df1_nona)
+avPlots(fit_3)
+```
+
+```{r}
+#polynomial regression with total_debit_limit
+df2 = df1[,c('interest_rate', 'total_debit_limit')]
+df2[is.na(df2[,2]), 2] <- mean(df2[,2], na.rm = TRUE)
+
+g1 = lm(interest_rate ~ total_debit_limit, data=df2)
+g2 = lm(interest_rate ~ total_debit_limit + I(total_debit_limit^2), data=df2) 
+g3 = lm(interest_rate ~ total_debit_limit + I(total_debit_limit^2) + I(total_debit_limit^3), data=df2)
+newx=data.frame(total_debit_limit=seq(0, 100, 0.01));
+attach(df2)
+plot(x = total_debit_limit, interest_rate, xlab="total_debit_limit", ylab="interest_rate")
+lines(newx$total_debit_limit, predict(g1, newx), col="black", lty=1);
+lines(newx$total_debit_limit, predict(g2, newx), col="blue", lty=2);
+lines(newx$total_debit_limit, predict(g3, newx), col="red", lty=1);
+legend("topleft",legend=c("d=1","d=2","d=3"),col=c("black","blue","red"),lty=c(1,2,1))
+```
+## If I had more time I would run a backward selection to select the best linear regression model. I will also check the collinearity with shapiro test to eliminate some variables. In the end, I would check QQ plots for normality assumption and use leverage plotting to get rid of high leverage points and highly influential points to make the data more workable
